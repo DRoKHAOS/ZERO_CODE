@@ -1,0 +1,373 @@
+import maya.cmds as mc
+
+
+flat = False 
+
+def distanceBetween3D(Xa,Ya,Za,Xb,Yb,Zb):
+    distX = (Xa - Xb) **2
+    distY = (Ya - Yb) **2
+    distZ = (Za - Zb) **2
+    dist = (distX + distY + distZ)**0.5
+    return dist
+        
+def getNormal(face):  
+    normalStr = mc.polyInfo(face, fn=True)[0]
+    a = normalStr.partition(': ')[2]
+    X = float(a.partition(' ')[0])
+    b = a.partition(' ')[2]
+    Y = float(b.partition(' ')[0])
+    Z = float(b.partition(' ')[2])
+    return [X,Y,Z]
+
+
+def connectNode(input, node, connection):
+    if isinstance(input, (int, long, float)):
+        mc.setAttr(node + connection, input)
+    else:
+        mc.connectAttr(input, node + connection)
+
+
+    
+def pma3D(op, in1, in2):
+    node = mc.shadingNode('plusMinusAverage', au=True)
+    
+    connectNode(op, node, '.operation')
+    connectNode(in1, node, '.input3D[0]')
+    connectNode(in2, node, '.input3D[1]')
+    return node+'.output3D'
+    
+def vProduct(op, in1, in2, normalize):
+    node = mc.shadingNode('vectorProduct', au=True)
+    connectNode(0, node, '.operation')
+    connectNode(in1, node, '.input1')
+    if in2 != None: connectNode(in2, node, '.input2')
+    if normalize == True: mc.setAttr(node+'.normalizeOutput', 1)
+    return node+'.output'
+    
+def cond(op, in1, in2, outTrue, outFalse):
+    node = mc.shadingNode('condition', au=True)
+    mc.setAttr(node+'.operation', op)
+    connectNode(in1, node, '.firstTerm')
+    connectNode(in2, node, '.secondTerm')
+    connectNode(outTrue, node, '.colorIfTrueR')
+    connectNode(outFalse, node, '.colorIfFalseR')
+    return node+'.outColorR'
+    
+def md3D(op, in1, in2):
+    node = mc.shadingNode('multiplyDivide', au=True)
+    connectNode(op, node, '.operation')
+    connectNode(in1, node, '.input1')
+    connectNode(in2, node, '.input2')
+    return node+'.output'
+    
+    
+    
+'''mc.undoInfo(openChunk = True)'''
+
+selection = mc.ls(sl = True, fl = True)
+slV = mc.polyEvaluate(vc = True)
+slE = mc.polyEvaluate(ec = True)
+slF = mc.polyEvaluate(fc = True)
+slC = [slV,slE,slF]
+slType = slC.index(max(slC))
+
+if slType ==0:
+    edgeSelection = mc.polyListComponentConversion(selection, fv = True, te= True, internal = True)
+    mc.select(edgeSelection)
+    if len(edgeSelection) != len(selection):
+        edgeSelection = mc.polyListComponentConversion(selection,fv = True, te = True, border = True)
+        edgeSelection = mc.polyListComponentConversion(edgeSelection, fe = True, tv = True)
+        mc.select(edgeSelection)
+        for i in mc.ls(sl = True, fl = True):
+            if i not in selection:
+                mc.select(i, d = True)
+        edgeSelection = mc.ls(sl = True, fl = True)
+        edgeSelection = mc.polyListComponentConversion(edgeSelection,fv = True, te = True, internal = True)
+        mc.select(edgeSelection)
+        edgeSelection = mc.ls(sl = True, fl = True)
+        
+if slType == 1:
+    edgeSelection = mc.ls(sl = True,fl = True)
+    
+
+if slType == 2:
+    edgeSelection = mc.polyListComponentConversion(selection, ff = True, te = True, border = True)
+    mc.select(edgeSelection)
+    edgeSelection = mc.ls(sl = True, fl = True)
+    
+mc.select(edgeSelection)
+
+
+# Transform edge to verts & construct selection arry
+edges = mc.ls(sl = True, fl = True)
+toVerts = mc.polyListComponentConversion(edges, fe = True, tv = True)
+mc.select(toVerts)
+
+verts = mc.ls(sl = True, fl = True)
+obj = mc.listRelatives(mc.ls(sl = True, o = True)[0], type = 'transform', p = True)[0]
+vertCount = len(verts)
+vertRange = range(vertCount)
+
+#Verts location
+vertLoc = [mc.xform(i, t = True,q = True, ws = True) for i in verts]
+vertLocX = [i[0] for i in vertLoc]
+vertLocY = [i[1] for i in vertLoc]
+vertLocZ = [i[2] for i in vertLoc]
+
+#Center Location
+
+centerX = min(vertLocX) + (max(vertLocX) - min(vertLocX))/2
+centerY = min(vertLocY) + (max(vertLocY) - min(vertLocY))/2
+centerZ = min(vertLocZ) + (max(vertLocZ) - min(vertLocZ))/2
+
+#average distance from center
+dist = [distanceBetween3D(centerX,centerY,centerZ,vertLocX[i],vertLocY[i],vertLocZ[i]) for i in vertRange]
+average = (sum(dist)/vertCount)
+
+#normal
+norm = mc.polyCylinder(r = average, h = 2, sx = vertCount)[0]
+a = '%s.f[0:%s]'%(norm,str(vertCount + 1))
+mc.select(a)
+b = mc.ls(sl = True, fl = True)
+normFace = '%s.f[%s]'%(norm,str(0))
+mc.select(b[-1],d = True)
+mc.delete()
+mc.xform(normFace,t = [0,-1,0], r = True)
+mc.xform(norm,t = [centerX,centerY,centerZ],a = True)
+normVerts = '%s.vtx[0:%s]'%(norm,str(vertCount - 1))
+mc.select(normVerts)
+normVerts = mc.ls(sl = True,fl = True)
+
+#order verts for place normal face
+vertsOrd = []
+mc.select(verts[0])
+vertsOrd.append(verts[0])
+
+mc.select(mc.polyListComponentConversion(fv = True,te = True))
+mc.select(mc.polyListComponentConversion(fe = True,tv = True))
+for i in mc.ls(sl = True,fl = True):
+    if i not in verts:
+        mc.select(i, d = True)
+mc.select(verts[0], d = True)
+mc.select(mc.ls(sl = True, fl = True)[0])
+vertsOrd.append(mc.ls(sl = True, fl = True))
+
+for i in range(vertCount - 2):
+    mc.select(mc.polyListComponentConversion(fv = True,te = True))
+    mc.select(mc.polyListComponentConversion(fe = True,tv = True))
+    for i in mc.ls(sl = True,fl = True):
+        if i not in verts:
+            mc.select(i, d = True)
+    for i in vertsOrd: mc.select(i,d = True)
+    vertsOrd.append(mc.ls(sl = True, fl = True))
+
+#place normal face & get normal direction
+
+for i in vertRange:
+    loc = mc.xform(vertsOrd[i],t = True,ws = True,q = True)
+    mc.xform(normVerts[i], t = loc,ws = True)   
+    
+circleNormal = getNormal(normFace)
+
+mc.select(vertsOrd[0])
+mc.select(normVerts[0],tgl = True)
+
+#compass rig
+center = mc.spaceLocator()
+mc.xform(center,t = [centerX,centerY,centerZ])
+outer = mc.duplicate(center)[0]
+mc.makeIdentity(outer,a = True)
+mc.xform(outer,t = circleNormal)
+aim = mc.aimConstraint(outer,center)
+mc.delete(aim)
+point = mc.pointConstraint(center,outer)
+mc.delete(point)
+mc.parent(outer,center)
+mc.makeIdentity(outer,a = True)
+mc.xform(outer,t = [0,0,(average)])
+
+#zero rig
+grp = mc.group(em = True)
+mc.parent(grp,center)
+mc.makeIdentity(a = True)
+mc.parent(grp,w = True)
+mc.parent(center,grp)
+
+#reorder verts for circle verts match
+start = mc.xform(outer,t = True,ws = True,q = True)
+startDist = [(distanceBetween3D(start[0],start[1],start[2],
+            vertLocX[i],vertLocY[i],vertLocZ[i])) for i in vertRange]
+startVert = startDist.index(min(startDist))
+
+vertsOrd = []
+
+#first vert ---closest vert
+mc.select(verts[startVert])
+vertsOrd.append(verts[startVert])
+#second vert ---rotating direction
+mc.select( mc.polyListComponentConversion(fv=True, te=True) )
+mc.select( mc.polyListComponentConversion(fe=True, tv=True) )
+for i in mc.ls(sl=True, fl=True):
+    if i not in verts:
+        mc.select(i, d=True)
+mc.select(verts[startVert], d=True)
+mc.select(mc.ls(sl=True, fl=True)[0])
+vertsOrd.append(mc.ls(sl=True, fl=True))
+
+for i in range(vertCount):
+    mc.select( mc.polyListComponentConversion(fv=True, te=True) )
+    mc.select( mc.polyListComponentConversion(fe=True, tv=True) )
+    for i in mc.ls(sl=True, fl=True):
+        if i not in verts:
+            mc.select(i, d=True)
+    for i in vertsOrd: mc.select(i, d=True)
+    vertsOrd.append(mc.ls(sl=True, fl=True))
+    
+#Flip Check
+flipCheckVert = mc.xform(vertsOrd[1], t = True, ws = True, q = True)
+flipCheckLoc = mc.xform(outer, t = True, ws = True, q = True)
+flipCheck = []
+#rotate one step get direction between newloc and second vert
+mc.xform(center, r = True, ro = [(360.0/vertCount),0,0])
+flipCheckLoc = mc.xform(outer,t = True,ws = True, q = True)
+flipCheck.append(distanceBetween3D(flipCheckVert[0],flipCheckVert[1],flipCheckVert[2],
+                flipCheckLoc[0],flipCheckLoc[1],flipCheckLoc[2]))
+#rotate negitave one step get direction between newloc and second vert
+mc.xform(center, r = True, ro = [-2*(360/vertCount),0,0])
+flipCheckLoc = mc.xform(outer,t = True,ws = True,q = True)
+flipCheck.append(distanceBetween3D(flipCheckVert[0],flipCheckVert[1],flipCheckVert[2],
+                flipCheckLoc[0],flipCheckLoc[1],flipCheckLoc[2]))
+#rotat back
+mc.xform(center, r = True, ro = [(360/vertCount),0,0])
+# compare two distance, the vert in min distace is the right direction(positive/negitave rotation)
+flipCheckN = flipCheck.index(min(flipCheck))
+if flipCheckN == 0: finalRot = [(360.0/vertCount), 0, 0]
+if flipCheckN == 1: finalRot = [-(360.0/vertCount), 0, 0]
+
+#Orient Check
+flipCheckVert = mc.xform(vertsOrd[0],t= True,ws = True,q= True)
+flipCheckLoc = mc.xform(outer,t = True,ws = True,q = True)
+flipCheck = []
+#Distance between loc and vert
+flipCheck.append(distanceBetween3D(flipCheckVert[0], flipCheckVert[1], flipCheckVert[2],
+    flipCheckLoc[0], flipCheckLoc[1], flipCheckLoc[2]))
+#Distance between rotated loc and vert    
+mc.xform(center, r=True, ro=[(360.0/vertCount/2), 0, 0])
+flipCheckLoc = mc.xform(outer, t=True, ws=True, q=True)
+flipCheck.append(distanceBetween3D(flipCheckVert[0], flipCheckVert[1], flipCheckVert[2],
+    flipCheckLoc[0], flipCheckLoc[1], flipCheckLoc[2]))
+#Distance between nagatively rotated loc and vert
+mc.xform(center, r=True, ro=[-2*(360.0/vertCount/2), 0, 0])
+flipCheckLoc = mc.xform(outer, t=True, ws=True, q=True)
+flipCheck.append(distanceBetween3D(flipCheckVert[0], flipCheckVert[1], flipCheckVert[2],
+    flipCheckLoc[0], flipCheckLoc[1], flipCheckLoc[2]))
+#Rotate back
+mc.xform(center, r=True, ro=[(360.0/vertCount/2), 0, 0])
+#Orient fix
+flipCheckN = flipCheck.index(min(flipCheck))
+if flipCheckN == 1: mc.xform(center, r=True, ro=[(360.0/vertCount/2), 0, 0])
+if flipCheckN == 2: mc.xform(center, r=True, ro=[-(360.0/vertCount/2), 0, 0])
+
+#Y rig
+yVector = mc.duplicate(outer)[0]
+mc.parent(yVector,outer)
+mc.xform(yVector,t = [1,0,0])
+finalLoc = mc.spaceLocator()
+
+#plane info
+planeInfo = mc.createNode('follicle')
+normal = mc.polyPlane(sx=1, sy=1, ax=[0, 1, 0])
+normalTrans = normal[0]
+normalPoly = normal[1]
+normalShape = mc.listRelatives(normal, s=True)[0]
+mc.connectAttr(normalTrans+'.worldMatrix', planeInfo+'.inputWorldMatrix')
+mc.connectAttr(normalShape+'.outMesh', planeInfo+'.inputMesh')
+
+#normalized vector
+yVectorA = pma3D(2, yVector+'.worldPosition[0]', outer+'.worldPosition[0]')
+normVector = vProduct(0, yVectorA, None, True)
+
+#multiplier
+divideByVector = vProduct(1, normVector, planeInfo+'.outNormal', False)
+planeA = pma3D(2, planeInfo+'.outTranslate', outer+'.worldPosition[0]')
+dividedVector = vProduct(1, planeA, planeInfo+'.outNormal', False)
+angleCheck = cond(0, divideByVector+'X', 0, 1, 2)
+multiplier = md3D(angleCheck, dividedVector, divideByVector)
+
+#multiply + offset -> finalLoc
+multiplied = md3D(1, normVector, multiplier)
+yInput = pma3D(1, multiplied, outer+'.worldPosition[0]')
+mc.connectAttr(yInput, finalLoc[0]+'.translate')
+
+ 
+                
+newLoc = []
+for i in vertRange:
+    mc.select(vertsOrd[i])
+    pointFaces = mc.polyListComponentConversion(fv=True, tf=True)
+    mc.select(pointFaces)
+    pointFaces = mc.ls(sl=True, fl=True)
+    
+    pointNormals = [getNormal(XYZ) for XYZ in pointFaces]
+    pointNormalsX = [X[0] for X in pointNormals]
+    pointNormalsY = [Y[1] for Y in pointNormals]
+    pointNormalsZ = [Z[2] for Z in pointNormals]
+    
+    pointNormalX = sum(pointNormalsX)/len(pointNormalsX)
+    pointNormalY = sum(pointNormalsY)/len(pointNormalsY)
+    pointNormalZ = sum(pointNormalsZ)/len(pointNormalsZ)
+    
+    mc.setAttr(normalPoly+'.axisX', pointNormalX)
+    mc.setAttr(normalPoly+'.axisY', pointNormalY)
+    mc.setAttr(normalPoly+'.axisZ', pointNormalZ)
+
+    vert = mc.xform(vertsOrd[i], t=True, ws=True, q=True)
+    mc.xform(normalTrans, t=vert, ws=True)
+    
+    if flat:
+        newLoc.append(mc.xform(outer, t=True, ws=True, q=True))
+    else:
+        newLoc.append(mc.xform(finalLoc, t=True, ws=True, q=True))
+    mc.xform(center, r=True, ro=finalRot)
+
+for i in vertRange:
+    mc.xform(vertsOrd[i], t=newLoc[i], ws=True)
+
+
+
+#clean up
+mc.delete(yInput.partition('.')[0])
+mc.delete(multiplied.partition('.')[0])
+mc.delete(multiplier.partition('.')[0])
+mc.delete(divideByVector.partition('.')[0])
+mc.delete(dividedVector.partition('.')[0])
+mc.delete(planeA.partition('.')[0])
+mc.delete(normVector.partition('.')[0])
+mc.delete(yVectorA.partition('.')[0])
+
+mc.delete(finalLoc)
+mc.delete(norm)
+mc.delete(grp)
+mc.delete(normalTrans)
+mc.delete(planeInfo.replace('Shape', ''))
+
+mc.selectMode(o=True)
+mc.select(obj)
+mc.selectMode(co=True)
+if slType == 0: mc.selectType(vertex=True)
+if slType == 1: mc.selectType(edge=True)
+if slType == 2: mc.selectType(facet=True)
+mc.select(selection)
+
+'''
+try:
+    run()
+    mc.undoInfo(closeChunk=True)
+except:
+    mc.undoInfo(closeChunk=True)
+    mc.undo()
+    mc.error('Error during Edge to Circle process. Check top of script!')
+'''  
+    
+
+    
